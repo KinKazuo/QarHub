@@ -1,0 +1,58 @@
+﻿{
+    "editor.fontFamily":  "\u0027Cascadia Code\u0027, \u0027JetBrains Mono\u0027, \u0027Fira Code\u0027, Consolas, \u0027Courier New\u0027, monospace",
+    "editor.lineHeight":  1.7,
+    "editor.fontLigatures":  true,
+    "editor.insertSpaces":  true,
+    "editor.wordWrap":  "on",
+    "editor.rulers":  [
+                          100,
+                          120
+                      ],
+    "editor.renderControlCharacters":  false,
+    "editor.cursorSmoothCaretAnimation":  "on",
+    "files.exclude":  {
+                          "**/.git":  true,
+                          "**/.DS_Store":  true,
+                          "**/node_modules":  true,
+                          "**/dist":  true,
+                          "**/build":  true,
+                          "**/.next":  true,
+                          "**/.turbo":  true,
+                          "**/.cache":  true
+                      },
+    "workbench.editor.wrapTabs":  true,
+    "workbench.sideBar.location":  "left",
+    "workbench.startupEditor":  "newUntitledFile",
+    "workbench.settings.editor":  "json",
+    "breadcrumbs.enabled":  true,
+    "window.commandCenter":  true,
+    "window.newWindowDimensions":  "maximized",
+    "window.titleBarStyle":  "custom",
+    "extensions.ignoreRecommendations":  false,
+    "markdown.preview.breaks":  true,
+    "typescript.tsserver.maxTsServerMemory":  4096,
+    "typescript.preferences.quoteStyle":  "single",
+    "javascript.preferences.quoteStyle":  "single",
+    "eslint.validate":  [
+                            "javascript",
+                            "javascriptreact",
+                            "typescript",
+                            "typescriptreact"
+                        ],
+    "html.format.wrapLineLength":  120,
+    "json.format.enable":  true,
+    "liveServer.settings.donotShowInfoMsg":  true,
+    "editor.formatOnSave":  true,
+    "[typescript]":  {
+                         "editor.defaultFormatter":  "esbenp.prettier-vscode"
+                     },
+    "[typescriptreact]":  {
+                              "editor.defaultFormatter":  "esbenp.prettier-vscode"
+                          },
+    "[css]":  {
+                  "editor.defaultFormatter":  "esbenp.prettier-vscode"
+              },
+    "[json]":  {
+                   "editor.defaultFormatter":  "esbenp.prettier-vscode"
+               }
+}
