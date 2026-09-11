@@ -28,6 +28,7 @@ export interface Post {
   acceptedReply?: string;
   image?: string;
   own?: boolean;
+  demo?: boolean;
 }
 export interface Car {
   id: string;

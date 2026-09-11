@@ -13,6 +13,72 @@
   --line: #e7ebe7;
   --soft: #eaf3ed;
 }
+.auth-tabs {
+  display: flex;
+  padding: 4px;
+  background: #edf3ec;
+  border-radius: 8px;
+  gap: 4px;
+}
+.auth-tabs button {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: #788d70;
+}
+.auth-tabs button.selected {
+  background: white;
+  color: var(--green);
+  box-shadow: 0 1px 4px #15372510;
+  font-weight: 600;
+}
+.account-email {
+  padding: 14px;
+  background: #f4f7f0;
+  border: 1px solid #e4eadf;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-wrap: anywhere;
+}
+.account-email span {
+  font-size: 11px;
+  color: #8b9e82;
+}
+.account-email strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.account-help {
+  font-size: 11px;
+  line-height: 1.7;
+  color: #91a187;
+}
+.connection-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 13px 15px;
+  border: 1px solid #e9d5a9;
+  border-radius: 7px;
+  background: #fff9e9;
+  color: #827043;
+  font-size: 12px;
+  margin-bottom: 20px;
+}
+.connection-banner button {
+  padding: 6px 9px;
+  background: #f4e8c9;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.demo-tag {
+  color: #949a92;
+  background: #f3f4f1;
+}
 * {
   box-sizing: border-box;
 }

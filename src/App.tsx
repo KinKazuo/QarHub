@@ -24,16 +24,10 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import {
-  brandMarks,
-  brands,
-  categories,
-  initialPosts,
-  type Category,
-  type Post,
-  type Section,
-} from './data';
-import { readState, writeState, type LocalState } from './storage';
+import { brandMarks, brands, categories, type Category, type Post, type Section } from './data';
+import { ApiError } from './api';
+import { useCommunity } from './useCommunity';
+import AccountModal from './AccountModal';
 import Modal from './Modal';
 
 const sections: { id: Section; label: string; icon: typeof Compass }[] = [
@@ -52,14 +46,6 @@ const replyWord = (count: number) =>
       : count % 10 >= 2 && count % 10 <= 4
         ? 'ответа'
         : 'ответов';
-const emptyState: LocalState = {
-  posts: initialPosts,
-  saved: [],
-  liked: [],
-  cars: [],
-  name: '',
-  joined: [],
-};
 type ModalType = 'post' | 'car' | 'profile' | 'rules' | null;
 
 function BrandMark({ brand }: { brand: string }) {
@@ -74,7 +60,8 @@ function BrandMark({ brand }: { brand: string }) {
 }
 
 export default function App() {
-  const [state, setState] = useState(() => readState(emptyState));
+  const { state, loading, error: connectionError, busy, refresh, mutate } = useCommunity();
+  const [pendingModal, setPendingModal] = useState<ModalType>(null);
   const [section, setSection] = useState<Section>('feed');
   const [category, setCategory] = useState<Category>('Все темы');
   const [brand, setBrand] = useState('Все марки');
@@ -86,15 +73,11 @@ export default function App() {
   );
   const [mobileMenu, setMobileMenu] = useState(false);
   const [notice, setNotice] = useState('');
-  const [storageError, setStorageError] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [formError, setFormError] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const post = state.posts.find((p) => p.id === selected);
 
-  useEffect(() => {
-    setStorageError(!writeState(state));
-  }, [state]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(''), 4000);
@@ -142,18 +125,31 @@ export default function App() {
   };
   const openModal = (type: ModalType) => {
     setFormError('');
+    if ((type === 'post' || type === 'car') && !state.user) {
+      setPendingModal(type);
+      setModal('profile');
+      return;
+    }
+    setPendingModal(null);
     setModal(type);
   };
+  async function action(path: string, method: string, body?: unknown, message?: string) {
+    if (!state.user) {
+      openModal('profile');
+      return;
+    }
+    try {
+      await mutate(path, method, body);
+      if (message) setNotice(message);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось выполнить действие.');
+      if (error instanceof ApiError && error.status === 401) openModal('profile');
+    }
+  }
   const toggleSaved = (id: string) =>
-    setState((s) => ({
-      ...s,
-      saved: s.saved.includes(id) ? s.saved.filter((x) => x !== id) : [...s.saved, id],
-    }));
+    void action(`/posts/${id}/bookmark`, 'PUT', { active: !state.saved.includes(id) });
   const toggleLiked = (id: string) =>
-    setState((s) => ({
-      ...s,
-      liked: s.liked.includes(id) ? s.liked.filter((x) => x !== id) : [...s.liked, id],
-    }));
+    void action(`/posts/${id}/like`, 'PUT', { active: !state.liked.includes(id) });
   const chooseBrand = (value: string) => {
     navigate('feed');
     setBrand(value);
@@ -175,15 +171,11 @@ export default function App() {
               .includes(search)),
       )
       .sort((a, b) =>
-        sort === 'popular'
-          ? b.likes +
-            Number(state.liked.includes(b.id)) -
-            (a.likes + Number(state.liked.includes(a.id)))
-          : Date.parse(b.createdAt) - Date.parse(a.createdAt),
+        sort === 'popular' ? b.likes - a.likes : Date.parse(b.createdAt) - Date.parse(a.createdAt),
       );
   }, [state.posts, state.saved, state.liked, section, brand, category, query, sort]);
 
-  function createPost(e: FormEvent<HTMLFormElement>) {
+  async function createPost(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const title = String(data.get('title') || '').trim();
@@ -192,30 +184,26 @@ export default function App() {
       setFormError('Добавь заголовок от 8 символов и описание от 20 символов.');
       return;
     }
-    const author = state.name || 'Новый участник';
-    const item: Post = {
-      id: crypto.randomUUID(),
-      author,
-      initials: author[0].toUpperCase(),
-      color: 'green',
+    const item = {
       title,
       body,
       brand: String(data.get('brand')),
       car: String(data.get('car') || '').trim() || String(data.get('brand')),
       category: String(data.get('category')) as Category,
       kind: data.get('kind') === 'journal' ? 'journal' : 'question',
-      createdAt: new Date().toISOString(),
-      likes: 0,
-      replies: [],
-      own: true,
     };
-    setState((s) => ({ ...s, posts: [item, ...s.posts] }));
-    setModal(null);
-    navigate('feed');
-    setNotice('Публикация добавлена');
-    openPost(item.id);
+    setFormError('');
+    try {
+      const result = await mutate('/posts', 'POST', item);
+      setModal(null);
+      navigate('feed');
+      setNotice('Публикация добавлена');
+      openPost(result.createdId!);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Не удалось опубликовать.');
+    }
   }
-  function createCar(e: FormEvent<HTMLFormElement>) {
+  async function createCar(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const model = String(data.get('model') || '').trim();
@@ -225,32 +213,30 @@ export default function App() {
       setFormError('Укажи модель и корректный год выпуска.');
       return;
     }
-    setState((s) => ({
-      ...s,
-      cars: [
-        ...s.cars,
-        { id: crypto.randomUUID(), brand: String(data.get('brand')), model, year, engine },
-      ],
-    }));
-    setModal(null);
-    navigate('garage');
-    setNotice('Автомобиль добавлен в гараж');
+    setFormError('');
+    try {
+      await mutate('/cars', 'POST', { brand: String(data.get('brand')), model, year, engine });
+      setModal(null);
+      navigate('garage');
+      setNotice('Автомобиль добавлен в гараж');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Не удалось добавить автомобиль.');
+    }
   }
-  function addReply(e: FormEvent<HTMLFormElement>) {
+  async function addReply(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!post || replyText.trim().length < 3) return;
-    const reply = {
-      id: crypto.randomUUID(),
-      author: state.name || 'Новый участник',
-      text: replyText.trim(),
-      createdAt: new Date().toISOString(),
-    };
-    setState((s) => ({
-      ...s,
-      posts: s.posts.map((p) => (p.id === post.id ? { ...p, replies: [...p.replies, reply] } : p)),
-    }));
-    setReplyText('');
-    setNotice('Ответ добавлен');
+    if (!state.user) {
+      openModal('profile');
+      return;
+    }
+    try {
+      await mutate(`/posts/${post.id}/replies`, 'POST', { text: replyText.trim() });
+      setReplyText('');
+      setNotice('Ответ добавлен');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Не удалось отправить ответ.');
+    }
   }
 
   function PostCard({ item }: { item: Post }) {
@@ -267,6 +253,7 @@ export default function App() {
         <div className="post-content">
           <div className="post-copy">
             <div className="post-tags">
+              {item.demo && <span className="tag demo-tag">Пример</span>}
               <span className={item.kind === 'journal' ? 'tag tag-journal' : 'tag'}>
                 {item.kind === 'journal' ? <BookOpen size={12} /> : <Wrench size={12} />}
                 {item.kind === 'journal' ? 'Бортжурнал' : item.category}
@@ -308,7 +295,7 @@ export default function App() {
             aria-pressed={state.liked.includes(item.id)}
           >
             <Heart size={16} fill={state.liked.includes(item.id) ? 'currentColor' : 'none'} />
-            {item.likes + Number(state.liked.includes(item.id))}
+            {item.likes}
           </button>
           <button className="metric" onClick={() => openPost(item.id)}>
             <MessageCircle size={16} />
@@ -381,7 +368,9 @@ export default function App() {
           </span>
           <button className="join-button" onClick={() => openModal('profile')}>
             {state.name ? (
-              <span className="profile-initial">{state.name[0].toUpperCase()}</span>
+              <span className="profile-initial" aria-hidden="true">
+                {state.name[0].toUpperCase()}
+              </span>
             ) : (
               <Users size={17} />
             )}
@@ -479,6 +468,17 @@ export default function App() {
         </aside>
 
         <main className="main">
+          {connectionError && (
+            <div className="connection-banner" role="alert">
+              <span>{connectionError}</span>
+              <button onClick={() => void refresh()}>Повторить</button>
+            </div>
+          )}
+          {loading && (
+            <div className="connection-banner" role="status">
+              Загружаем сообщество…
+            </div>
+          )}
           <div className="mobile-search">
             <Search size={17} />
             <input
@@ -573,10 +573,10 @@ export default function App() {
                       </button>
                       <button
                         className="remove-car"
-                        onClick={() => {
-                          setState((s) => ({ ...s, cars: s.cars.filter((c) => c.id !== car.id) }));
-                          setNotice('Автомобиль убран из гаража');
-                        }}
+                        disabled={busy}
+                        onClick={() =>
+                          void action(`/cars/${car.id}`, 'DELETE', {}, 'Автомобиль убран из гаража')
+                        }
                       >
                         Убрать из гаража
                       </button>
@@ -626,13 +626,11 @@ export default function App() {
                       <button
                         className={`follow-button ${state.joined.includes(b) ? 'following' : ''}`}
                         aria-label={`${state.joined.includes(b) ? 'Отписаться от' : 'Подписаться на'} ${b}`}
+                        disabled={busy}
                         onClick={() =>
-                          setState((s) => ({
-                            ...s,
-                            joined: s.joined.includes(b)
-                              ? s.joined.filter((x) => x !== b)
-                              : [...s.joined, b],
-                          }))
+                          void action(`/memberships/${encodeURIComponent(b)}`, 'PUT', {
+                            active: !state.joined.includes(b),
+                          })
                         }
                       >
                         {state.joined.includes(b) ? <Check size={16} /> : <Plus size={16} />}
@@ -800,8 +798,7 @@ export default function App() {
                           <span>
                             <strong>{p.title}</strong>
                             <small>
-                              {p.brand} <span>·</span>{' '}
-                              {p.likes + Number(state.liked.includes(p.id))} нравится
+                              {p.brand} <span>·</span> {p.likes} нравится
                             </small>
                           </span>
                         </button>
@@ -841,16 +838,11 @@ export default function App() {
             <span>
               <span className="green-dot" /> QarHub · первая версия
             </span>
-            <span>Демо-публикации. Твои изменения сохраняются в этом браузере.</span>
+            <span>QarHub · общая база сообщества. Первые 5 историй — демонстрационные.</span>
           </footer>
         </main>
       </div>
 
-      {storageError && (
-        <div className="storage-warning" role="alert">
-          Браузер не разрешает сохранение. Новые изменения могут пропасть после закрытия страницы.
-        </div>
-      )}
       {notice && (
         <div className="toast" role="status">
           <Check size={18} />
@@ -861,10 +853,10 @@ export default function App() {
         </div>
       )}
 
-      {selected && !post && (
+      {selected && !post && !loading && !connectionError && (
         <Modal title="Обсуждение не найдено" onClose={closePost}>
           <div className="modal-body">
-            <p>В этом браузере нет такой публикации. Вернись к ленте и выбери обсуждение.</p>
+            <p>Публикация не найдена. Проверь ссылку или выбери обсуждение из ленты.</p>
             <button className="primary-button" onClick={closePost}>
               К ленте
             </button>
@@ -909,7 +901,7 @@ export default function App() {
                 aria-pressed={state.liked.includes(post.id)}
               >
                 <Heart size={17} />
-                {post.likes + Number(state.liked.includes(post.id))}
+                {post.likes}
               </button>
               <button className="secondary-button" onClick={() => toggleSaved(post.id)}>
                 <Bookmark size={17} />
@@ -949,15 +941,11 @@ export default function App() {
                   {post.own && post.kind === 'question' && (
                     <button
                       className="text-link"
+                      disabled={busy}
                       onClick={() =>
-                        setState((s) => ({
-                          ...s,
-                          posts: s.posts.map((p) =>
-                            p.id === post.id
-                              ? { ...p, acceptedReply: p.acceptedReply === r.id ? undefined : r.id }
-                              : p,
-                          ),
-                        }))
+                        void action(`/posts/${post.id}/solution`, 'PUT', {
+                          replyId: post.acceptedReply === r.id ? null : r.id,
+                        })
                       }
                     >
                       {post.acceptedReply === r.id ? 'Снять отметку решения' : 'Этот ответ помог'}
@@ -980,11 +968,13 @@ export default function App() {
                 rows={3}
               />
               <div>
-                <span>Публикуешь как {state.name || 'Новый участник'}</span>
+                <span>
+                  {state.user ? `Публикуешь как ${state.name}` : 'Для ответа войди в аккаунт'}
+                </span>
                 <button
                   className="primary-button"
                   type="submit"
-                  disabled={replyText.trim().length < 3}
+                  disabled={busy || replyText.trim().length < 3}
                 >
                   <Send size={16} />
                   Ответить
@@ -1072,8 +1062,8 @@ export default function App() {
               </p>
             )}
             <div className="form-bottom">
-              <span>Сохранится в этом браузере</span>
-              <button type="submit" className="primary-button">
+              <span>Будет видно всему сообществу</span>
+              <button type="submit" className="primary-button" disabled={busy}>
                 Опубликовать <ArrowUpRight size={17} />
               </button>
             </div>
@@ -1120,7 +1110,7 @@ export default function App() {
                 {formError}
               </p>
             )}
-            <button type="submit" className="primary-button full-width">
+            <button type="submit" className="primary-button full-width" disabled={busy}>
               <Plus size={17} />
               Добавить в гараж
             </button>
@@ -1128,62 +1118,20 @@ export default function App() {
         </Modal>
       )}
       {modal === 'profile' && (
-        <Modal
-          title={state.name ? 'Твой профиль' : 'Добро пожаловать в QarHub'}
-          onClose={() => setModal(null)}
-        >
-          <form
-            className="editor-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const name = String(new FormData(e.currentTarget).get('name') || '').trim();
-              if (name.length < 2) {
-                setFormError('Нужно хотя бы 2 символа.');
-                return;
-              }
-              setState((s) => ({
-                ...s,
-                name,
-                posts: s.posts.map((p) =>
-                  p.own ? { ...p, author: name, initials: name[0].toUpperCase() } : p,
-                ),
-              }));
-              setModal(null);
-              setNotice('Профиль сохранён');
-            }}
-          >
-            <div className="welcome-mark">
-              <Users size={34} strokeWidth={1.5} />
-            </div>
-            <p className="form-intro">
-              Здесь знакомятся через машины, а остаются ради людей. Как к тебе обращаться?
-            </p>
-            <label>
-              Имя или никнейм
-              <input
-                name="name"
-                placeholder="Например, Alik_Drive"
-                defaultValue={state.name}
-                minLength={2}
-                maxLength={32}
-                required
-              />
-            </label>
-            <p className="local-note">
-              Это локальный профиль для первой версии. Регистрация и вход с других устройств
-              появятся после подключения сервера.
-            </p>
-            {formError && (
-              <p className="form-error" role="alert">
-                {formError}
-              </p>
-            )}
-            <button className="primary-button full-width" type="submit">
-              {state.name ? 'Сохранить' : 'Поехали'}
-              <ArrowRight size={17} />
-            </button>
-          </form>
-        </Modal>
+        <AccountModal
+          user={state.user}
+          busy={busy}
+          mutate={mutate}
+          onClose={() => {
+            setModal(null);
+            setPendingModal(null);
+          }}
+          onSuccess={(message) => {
+            setModal(pendingModal);
+            setPendingModal(null);
+            setNotice(message);
+          }}
+        />
       )}
       {modal === 'rules' && (
         <Modal title="На одной дороге" onClose={() => setModal(null)}>
@@ -1212,8 +1160,9 @@ export default function App() {
               управлением и другими системами безопасности доверяй специалистам.
             </p>
             <div className="local-note">
-              Сейчас это локальный прототип. Начальные публикации и реакции демонстрационные; общей
-              базы пользователей и модерации ещё нет.
+              Начальные пять историй и их исходные реакции демонстрационные. Новые публикации
+              сохраняются на сервере и доступны всем участникам. Модерация и загрузка фотографий —
+              следующие этапы развития.
             </div>
           </div>
         </Modal>
