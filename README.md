@@ -119,3 +119,19 @@ npm test
 Фотографии Unsplash иллюстративные: [обложка](https://images.unsplash.com/photo-1503376780353-7e6692767b70), [автомобиль](https://images.unsplash.com/photo-1492144534655-ae79c964c9d7), [горы](https://images.unsplash.com/photo-1464822759023-fed622ff2c3b). Иконки — Lucide, шрифт — Golos Text / Google Fonts. Перед публикацией перепроверь права на материалы и название.
 
 [Sharp: обработка изображений](https://sharp.pixelplumbing.com/), [React](https://react.dev/learn), [Vite](https://vite.dev/guide/), [Node.js SQLite](https://nodejs.org/docs/latest-v24.x/api/sqlite.html), [Express](https://expressjs.com/), [OWASP: хранение паролей](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
+
+## Тестирование с друзьями через ngrok (Windows)
+
+Ngrok установлен из Microsoft Store. Для подключения аккаунта открой `connect-ngrok.cmd`: войди в личный кабинет, скопируй Authtoken и вставь в локальное окно. Конфигурация хранится вне проекта: `%LOCALAPPDATA%/QarHub/ngrok.yml`. Не добавляй токен в Git или чат.
+
+- Запуск: `start-qarhub-share.cmd` или `npm run share`. Команда собирает сайт, получает HTTPS-адрес ngrok и запускает отдельный сервер на 127.0.0.1:3002.
+- Остановка: `stop-qarhub-share.cmd` или `npm run share:stop`. Закрывает только тестовый сервер и его туннель.
+- Ссылка появляется в консоли. Компьютер, интернет и процессы должны оставаться включёнными.
+- Тестовая база: `data/qarhub-demo.sqlite`. Создаётся с демонстрационными историями; аккаунты и данные из основной базы не копируются. Для тестирования нужна отдельная регистрация. Повторный запуск сохраняет тестовые аккаунты и фото.
+- Для резервной копии тестовых данных в PowerShell: `$env:DATABASE_PATH='data/qarhub-demo.sqlite'; npm.cmd run db:backup; Remove-Item Env:DATABASE_PATH`.
+
+Обычный `npm run dev` продолжает использовать основную базу и порты 5173/3001. Публичный запуск использует production-сборку, Secure-cookie и точный разрешённый HTTPS-origin. Прокси доверяется только на loopback, чтобы ограничения запросов различали посетителей. Инспекция содержимого HTTP-запросов в локальном ngrok отключена.
+
+Служебные порты 4047 (ngrok API) и 4046 (остановка с локальным случайным ключом) слушают только 127.0.0.1. Туннель ведёт исключительно на порт 3002. Служебный файл `.artifacts/ngrok-session.json` исключён из Git. Если какой-либо порт занят, запуск завершается без остановки чужого процесса. Для иной установки ngrok укажи переменную `NGROK_BIN` с путём к исполняемому файлу.
+
+Документация: [ngrok для Windows](https://ngrok.com/download/windows), [заголовки прокси ngrok](https://ngrok.com/docs/gateway/endpoints/http#upstream-headers).

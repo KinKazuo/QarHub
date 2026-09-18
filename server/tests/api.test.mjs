@@ -452,6 +452,18 @@ test('authentication attempts are rate limited', async (t) => {
   assert.ok(limited.headers.get('retry-after'));
 });
 
+test('local tunnel uses the last forwarded client IP for separate login limits', async (t) => {
+  const f = await fixture(t, { authLimit: 2, trustProxy: 'loopback', secureCookies: true });
+  const client = f.client();
+  const from = (chain) =>
+    client.request('/api/auth/login', 'POST', {}, { 'X-Forwarded-For': chain });
+  assert.equal((await from('198.51.100.10')).status, 400);
+  assert.equal((await from('203.0.113.5, 198.51.100.10')).status, 400);
+  // A forged leftmost address must not bypass the limit for the real client.
+  assert.equal((await from('203.0.113.6, 198.51.100.10')).status, 429);
+  assert.equal((await from('198.51.100.11')).status, 400);
+});
+
 test('accounts, sessions and posts survive database and server restart', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'qarhub-api-'));
   t.after(() => {

@@ -40,9 +40,11 @@ export function createApp({
   origins = ['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:3001'],
   secureCookies = false,
   authLimit = 20,
+  trustProxy = false,
   staticDirectory,
 } = {}) {
   const app = express();
+  app.set('trust proxy', trustProxy);
   app.disable('x-powered-by');
   app.use(
     helmet({

@@ -14,7 +14,9 @@
     "test": "node --test server/tests/*.test.mjs && playwright test",
     "test:api": "node --test server/tests/*.test.mjs",
     "test:e2e": "playwright test",
-    "db:backup": "node --env-file-if-exists=.env scripts/backup.mjs"
+    "db:backup": "node --env-file-if-exists=.env scripts/backup.mjs",
+    "share": "npm run build && node scripts/share.mjs",
+    "share:stop": "node scripts/stop-share.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",
