@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { brands, categories } from '../src/data.ts';
-import { getState } from './db.mjs';
+import { getState, getProfile } from './db.mjs';
+import { mountImages, ownedImage, ImageError } from './images.mjs';
 import { hashPassword, verifyPassword, currentUser, createSession, clearSession } from './auth.mjs';
 
 class HttpError extends Error {
@@ -60,7 +61,8 @@ export function createApp({
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
       if (req.get('X-QarHub-Client') !== 'web' || !origins.includes(req.get('Origin')))
         return res.status(403).json({ error: 'Запрос с этого адреса не разрешён.' });
-      if (!req.is('application/json')) return res.status(415).json({ error: 'Требуется JSON.' });
+      if (!(req.method === 'POST' && req.path === '/images') && !req.is('application/json'))
+        return res.status(415).json({ error: 'Требуется JSON.' });
     }
     next();
   });
@@ -85,6 +87,7 @@ export function createApp({
   });
   const requireUser = (req, res, next) =>
     req.user ? next() : res.status(401).json({ error: 'Войди в аккаунт, чтобы продолжить.' });
+  mountImages(app, db, requireUser);
   const respond = (req, res, extra = {}, status = 200) =>
     res.status(status).json({ state: getState(db, req.user), ...extra });
   const findPost = (id) => {
@@ -147,9 +150,27 @@ export function createApp({
     req.user = null;
     respond(req, res);
   });
+  app.get('/api/profiles/:id', (req, res) => {
+    const profile = getProfile(db, req.params.id);
+    if (!profile) throw new HttpError(404, 'Участник не найден.');
+    res.json({ profile });
+  });
   app.patch('/api/profile', requireUser, (req, res) => {
     const name = text(req.body?.name, 2, 32, 'Имя');
-    db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, req.user.id);
+    const previous = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const city = text(req.body.city ?? previous.city, 0, 80, 'Город');
+    const bio = text(req.body.bio ?? previous.bio, 0, 500, 'О себе');
+    const avatar =
+      req.body.avatarId === undefined
+        ? previous.avatar_id
+        : ownedImage(db, req.user.id, req.body.avatarId);
+    db.prepare('UPDATE users SET name = ?, city = ?, bio = ?, avatar_id = ? WHERE id = ?').run(
+      name,
+      city,
+      bio,
+      avatar,
+      req.user.id,
+    );
     req.user = { ...req.user, name };
     respond(req, res);
   });
@@ -162,9 +183,30 @@ export function createApp({
     const car = text(body.car || brand, 1, 100, 'Модель');
     const category = choice(body.category, categories.slice(1), 'Тема');
     const kind = choice(body.kind, ['question', 'journal'], 'Тип публикации');
-    db.prepare(
-      `INSERT INTO posts (id, user_id, brand, car, title, body, category, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, req.user.id, brand, car, title, content, category, kind, new Date().toISOString());
+    const images = body.imageIds ?? [];
+    if (
+      !Array.isArray(images) ||
+      images.length > 4 ||
+      new Set(images).size !== images.length ||
+      images.some((id) => typeof id !== 'string')
+    )
+      throw new HttpError(400, 'Можно добавить до четырёх разных фотографий.');
+    images.forEach((image) => ownedImage(db, req.user.id, image));
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(
+        `INSERT INTO posts (id, user_id, brand, car, title, body, category, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, req.user.id, brand, car, title, content, category, kind, new Date().toISOString());
+      images.forEach((image, position) =>
+        db
+          .prepare('INSERT INTO post_images (post_id, image_id, position) VALUES (?, ?, ?)')
+          .run(id, image, position),
+      );
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
     respond(req, res, { createdId: id }, 201);
   });
   app.post('/api/posts/:id/replies', requireUser, (req, res) => {
@@ -234,11 +276,30 @@ export function createApp({
     const year = Number(body.year);
     if (!Number.isInteger(year) || year < 1950 || year > new Date().getFullYear() + 1)
       throw new HttpError(400, 'Проверь год выпуска.');
+    const image = ownedImage(db, req.user.id, body.imageId);
+    if (body.isPublic !== undefined && typeof body.isPublic !== 'boolean')
+      throw new HttpError(400, 'Укажи видимость машины.');
     const id = randomUUID();
     db.prepare(
-      'INSERT INTO cars (id, user_id, brand, model, year, engine) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(id, req.user.id, brand, model, year, engine);
+      'INSERT INTO cars (id, user_id, brand, model, year, engine, image_id, is_public) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, req.user.id, brand, model, year, engine, image, body.isPublic ? 1 : 0);
     respond(req, res, { createdId: id }, 201);
+  });
+  app.patch('/api/cars/:id', requireUser, (req, res) => {
+    const car = db
+      .prepare('SELECT * FROM cars WHERE id = ? AND user_id = ?')
+      .get(req.params.id, req.user.id);
+    if (!car) throw new HttpError(404, 'Автомобиль не найден в твоём гараже.');
+    const image =
+      req.body.imageId === undefined ? car.image_id : ownedImage(db, req.user.id, req.body.imageId);
+    if (req.body.isPublic !== undefined && typeof req.body.isPublic !== 'boolean')
+      throw new HttpError(400, 'Укажи видимость машины.');
+    db.prepare('UPDATE cars SET image_id = ?, is_public = ? WHERE id = ?').run(
+      image,
+      req.body.isPublic === undefined ? car.is_public : Number(req.body.isPublic),
+      car.id,
+    );
+    respond(req, res);
   });
   app.delete('/api/cars/:id', requireUser, (req, res) => {
     const car = db
@@ -258,12 +319,12 @@ export function createApp({
     const status =
       error.status && error.status >= 400 && error.status < 500
         ? error.status
-        : error instanceof HttpError
+        : error instanceof HttpError || error instanceof ImageError
           ? error.status
           : 500;
     if (status === 500) console.error('QarHub request failed:', error.code || error.name);
     const message =
-      error instanceof HttpError
+      error instanceof HttpError || error instanceof ImageError
         ? error.message
         : status === 413
           ? 'Слишком большой запрос.'

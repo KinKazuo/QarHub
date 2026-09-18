@@ -25,7 +25,10 @@ import {
   X,
 } from 'lucide-react';
 import { brandMarks, brands, categories, type Category, type Post, type Section } from './data';
-import { ApiError } from './api';
+import { ApiError, type Photo } from './api';
+import ImagePicker from './ImagePicker';
+import PublicProfile from './PublicProfile';
+import CarPhotoModal from './CarPhotoModal';
 import { useCommunity } from './useCommunity';
 import AccountModal from './AccountModal';
 import Modal from './Modal';
@@ -61,6 +64,12 @@ function BrandMark({ brand }: { brand: string }) {
 
 export default function App() {
   const { state, loading, error: connectionError, busy, refresh, mutate } = useCommunity();
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [editingCar, setEditingCar] = useState<string | null>(null);
+  const [memberId, setMemberId] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get('member'),
+  );
   const [pendingModal, setPendingModal] = useState<ModalType>(null);
   const [section, setSection] = useState<Section>('feed');
   const [category, setCategory] = useState<Category>('Все темы');
@@ -93,6 +102,7 @@ export default function App() {
     const pop = () => {
       setSelected(new URLSearchParams(window.location.search).get('post'));
       setReplyText('');
+      setMemberId(new URLSearchParams(window.location.search).get('member'));
     };
     window.addEventListener('keydown', key);
     window.addEventListener('popstate', pop);
@@ -114,6 +124,7 @@ export default function App() {
     setSort('new');
   };
   const openPost = (id: string) => {
+    setMemberId(null);
     setSelected(id);
     setReplyText('');
     window.history.pushState({}, '', `?post=${encodeURIComponent(id)}`);
@@ -123,7 +134,19 @@ export default function App() {
     setReplyText('');
     window.history.pushState({}, '', window.location.pathname);
   };
+  const openMember = (id: string) => {
+    setSelected(null);
+    setModal(null);
+    setMemberId(id);
+    window.history.pushState({}, '', '?member=' + encodeURIComponent(id));
+  };
+  const closeMember = () => {
+    setMemberId(null);
+    window.history.pushState({}, '', window.location.pathname);
+  };
   const openModal = (type: ModalType) => {
+    setPhotos([]);
+    setUploading(false);
     setFormError('');
     if ((type === 'post' || type === 'car') && !state.user) {
       setPendingModal(type);
@@ -177,6 +200,7 @@ export default function App() {
 
   async function createPost(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy || uploading) return;
     const data = new FormData(e.currentTarget);
     const title = String(data.get('title') || '').trim();
     const body = String(data.get('body') || '').trim();
@@ -187,6 +211,7 @@ export default function App() {
     const item = {
       title,
       body,
+      imageIds: photos.map((p) => p.id),
       brand: String(data.get('brand')),
       car: String(data.get('car') || '').trim() || String(data.get('brand')),
       category: String(data.get('category')) as Category,
@@ -205,6 +230,7 @@ export default function App() {
   }
   async function createCar(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy || uploading) return;
     const data = new FormData(e.currentTarget);
     const model = String(data.get('model') || '').trim();
     const year = String(data.get('year'));
@@ -215,7 +241,14 @@ export default function App() {
     }
     setFormError('');
     try {
-      await mutate('/cars', 'POST', { brand: String(data.get('brand')), model, year, engine });
+      await mutate('/cars', 'POST', {
+        brand: String(data.get('brand')),
+        model,
+        year,
+        engine,
+        imageId: photos[0]?.id || null,
+        isPublic: data.get('isPublic') === 'on',
+      });
       setModal(null);
       navigate('garage');
       setNotice('Автомобиль добавлен в гараж');
@@ -243,9 +276,26 @@ export default function App() {
     return (
       <article className="post-card">
         <div className="post-author">
-          <span className={`avatar ${item.color}`}>{item.initials}</span>
+          <span className={`avatar ${item.color}`}>
+            {item.avatar ? <img src={item.avatar} alt="" /> : item.initials}
+          </span>
           <div>
-            <strong>{item.author}</strong>
+            <strong>
+              {item.authorId ? (
+                <a
+                  className="author-link"
+                  href={`?member=${item.authorId}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openMember(item.authorId!);
+                  }}
+                >
+                  {item.author}
+                </a>
+              ) : (
+                item.author
+              )}
+            </strong>
             <span>{item.car}</span>
           </div>
           <time dateTime={item.createdAt}>{formatDate(item.createdAt)}</time>
@@ -275,15 +325,7 @@ export default function App() {
               onClick={() => openPost(item.id)}
               aria-label={`Открыть: ${item.title}`}
             >
-              <img
-                src={item.image}
-                alt={
-                  item.kind === 'journal' && item.brand === 'BMW'
-                    ? 'Автомобиль BMW, иллюстрация бортжурнала'
-                    : 'Горный пейзаж, иллюстрация поездки'
-                }
-                loading="lazy"
-              />
+              <img src={item.image} alt={`Фото к публикации: ${item.title}`} loading="lazy" />
             </button>
           )}
         </div>
@@ -369,7 +411,11 @@ export default function App() {
           <button className="join-button" onClick={() => openModal('profile')}>
             {state.name ? (
               <span className="profile-initial" aria-hidden="true">
-                {state.name[0].toUpperCase()}
+                {state.user?.avatar ? (
+                  <img src={state.user.avatar} alt="" />
+                ) : (
+                  state.name[0].toUpperCase()
+                )}
               </span>
             ) : (
               <Users size={17} />
@@ -558,10 +604,22 @@ export default function App() {
                   {state.cars.map((car) => (
                     <article className="garage-card" key={car.id}>
                       <div className="garage-car-art">
-                        <CarFront strokeWidth={1} size={110} />
+                        <>
+                          {car.image ? (
+                            <img
+                              className="garage-photo"
+                              src={car.image}
+                              alt={`${car.brand} ${car.model}`}
+                            />
+                          ) : (
+                            <CarFront strokeWidth={1} size={110} />
+                          )}
+                        </>
                         <BrandMark brand={car.brand} />
                       </div>
-                      <span className="eyebrow">В МОЁМ ГАРАЖЕ</span>
+                      <span className="eyebrow">
+                        {car.isPublic ? 'ВИДНО В ПРОФИЛЕ' : 'ТОЛЬКО ДЛЯ ТЕБЯ'}
+                      </span>
                       <h2>
                         {car.brand} {car.model}
                       </h2>
@@ -570,6 +628,13 @@ export default function App() {
                       </p>
                       <button className="text-link" onClick={() => chooseBrand(car.brand)}>
                         Обсуждения {car.brand} <ArrowRight size={16} />
+                      </button>
+                      <button
+                        className="secondary-button car-edit-button"
+                        disabled={busy}
+                        onClick={() => setEditingCar(car.id)}
+                      >
+                        Фото и видимость
                       </button>
                       <button
                         className="remove-car"
@@ -871,10 +936,25 @@ export default function App() {
         >
           <article className="post-detail">
             <div className="post-author">
-              <span className={`avatar ${post.color}`}>{post.initials}</span>
+              <span className={`avatar ${post.color}`}>
+                {post.avatar ? <img src={post.avatar} alt="" /> : post.initials}
+              </span>
               <div>
                 <strong>
-                  {post.author}
+                  {post.authorId ? (
+                    <a
+                      className="author-link"
+                      href={`?member=${post.authorId}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        openMember(post.authorId!);
+                      }}
+                    >
+                      {post.author}
+                    </a>
+                  ) : (
+                    post.author
+                  )}
                   {post.own ? ' · это ты' : ''}
                 </strong>
                 <span>{post.car}</span>
@@ -884,15 +964,31 @@ export default function App() {
             <span className="tag">{post.category}</span>
             <h1>{post.title}</h1>
             <p className="detail-text">{post.body}</p>
-            {post.image && (
-              <figure>
-                <img
-                  className="detail-image"
-                  src={post.image}
-                  alt="Иллюстрация к демонстрационной истории"
-                />
-                <figcaption>Иллюстративное фото · Unsplash</figcaption>
-              </figure>
+            {!!post.images?.length ? (
+              <div className="post-gallery">
+                {post.images.map((photo, i) => (
+                  <a
+                    key={photo.id}
+                    href={photo.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`Открыть фото ${i + 1}`}
+                  >
+                    <img src={photo.url} alt={`Фото ${i + 1} к публикации: ${post.title}`} />
+                  </a>
+                ))}
+              </div>
+            ) : (
+              post.image && (
+                <figure>
+                  <img
+                    className="detail-image"
+                    src={post.image}
+                    alt="Иллюстрация к демонстрационной истории"
+                  />
+                  <figcaption>Иллюстративное фото · Unsplash</figcaption>
+                </figure>
+              )
             )}
             <div className="detail-actions">
               <button
@@ -928,8 +1024,25 @@ export default function App() {
                   className={`reply ${post.acceptedReply === r.id ? 'accepted-reply' : ''}`}
                 >
                   <div>
-                    <span className="avatar small green">{r.author[0].toUpperCase()}</span>
-                    <strong>{r.author}</strong>
+                    <span className="avatar small green">
+                      {r.avatar ? <img src={r.avatar} alt="" /> : r.author[0].toUpperCase()}
+                    </span>
+                    <strong>
+                      {r.authorId ? (
+                        <a
+                          className="author-link"
+                          href={`?member=${r.authorId}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            openMember(r.authorId!);
+                          }}
+                        >
+                          {r.author}
+                        </a>
+                      ) : (
+                        r.author
+                      )}
+                    </strong>
                     {post.acceptedReply === r.id && (
                       <span className="solved">
                         <Check size={13} />
@@ -1061,9 +1174,17 @@ export default function App() {
                 {formError}
               </p>
             )}
+            <ImagePicker
+              label="Фото публикации"
+              value={photos}
+              onChange={setPhotos}
+              onBusy={setUploading}
+              max={4}
+              disabled={busy}
+            />
             <div className="form-bottom">
               <span>Будет видно всему сообществу</span>
-              <button type="submit" className="primary-button" disabled={busy}>
+              <button type="submit" className="primary-button" disabled={busy || uploading}>
                 Опубликовать <ArrowUpRight size={17} />
               </button>
             </div>
@@ -1110,15 +1231,47 @@ export default function App() {
                 {formError}
               </p>
             )}
-            <button type="submit" className="primary-button full-width" disabled={busy}>
+            <ImagePicker
+              label="Фото автомобиля"
+              value={photos}
+              onChange={setPhotos}
+              onBusy={setUploading}
+              disabled={busy}
+            />
+            <label className="checkbox-label">
+              <input type="checkbox" name="isPublic" />
+              Показывать автомобиль в моём профиле
+            </label>
+            <button
+              type="submit"
+              className="primary-button full-width"
+              disabled={busy || uploading}
+            >
               <Plus size={17} />
               Добавить в гараж
             </button>
           </form>
         </Modal>
       )}
+      {memberId && (
+        <PublicProfile key={memberId} id={memberId} onClose={closeMember} onPost={openPost} />
+      )}
+      {editingCar && state.cars.find((c) => c.id === editingCar) && (
+        <CarPhotoModal
+          car={state.cars.find((c) => c.id === editingCar)!}
+          mutate={mutate}
+          onClose={() => setEditingCar(null)}
+          onSuccess={() => {
+            setEditingCar(null);
+            setNotice('Автомобиль сохранён');
+          }}
+        />
+      )}
       {modal === 'profile' && (
         <AccountModal
+          onViewProfile={() => {
+            if (state.user) openMember(state.user.id);
+          }}
           user={state.user}
           busy={busy}
           mutate={mutate}
@@ -1161,8 +1314,8 @@ export default function App() {
             </p>
             <div className="local-note">
               Начальные пять историй и их исходные реакции демонстрационные. Новые публикации
-              сохраняются на сервере и доступны всем участникам. Модерация и загрузка фотографий —
-              следующие этапы развития.
+              сохраняются на сервере и доступны всем участникам. Можно добавлять фотографии и
+              знакомиться с участниками через профили. Модерация — следующий этап развития.
             </div>
           </div>
         </Modal>

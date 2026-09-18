@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, LogOut, ShieldCheck } from 'lucide-react';
 import Modal from './Modal';
+import ImagePicker from './ImagePicker';
 import type { ApiResult, User } from './api';
 
 type Props = {
@@ -9,18 +10,36 @@ type Props = {
   mutate: (path: string, method?: string, body?: unknown) => Promise<ApiResult>;
   onClose: () => void;
   onSuccess: (message: string) => void;
+  onViewProfile: () => void;
 };
 
-export default function AccountModal({ user, busy, mutate, onClose, onSuccess }: Props) {
+export default function AccountModal({
+  user,
+  busy,
+  mutate,
+  onClose,
+  onSuccess,
+  onViewProfile,
+}: Props) {
   const [mode, setMode] = useState<'register' | 'login'>('register');
   const [error, setError] = useState('');
+  const [photos, setPhotos] = useState(
+    user?.avatarId && user.avatar ? [{ id: user.avatarId, url: user.avatar }] : [],
+  );
+  const [uploading, setUploading] = useState(false);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy || uploading) return;
     setError('');
     const form = new FormData(e.currentTarget);
     try {
       if (user) {
-        await mutate('/profile', 'PATCH', { name: form.get('name') });
+        await mutate('/profile', 'PATCH', {
+          name: form.get('name'),
+          city: form.get('city'),
+          bio: form.get('bio'),
+          avatarId: photos[0]?.id || null,
+        });
         onSuccess('Профиль сохранён');
       } else {
         const password = String(form.get('password') || '');
@@ -58,7 +77,7 @@ export default function AccountModal({ user, busy, mutate, onClose, onSuccess }:
           <div className="auth-tabs" role="group" aria-label="Доступ к аккаунту">
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || uploading}
               className={mode === 'register' ? 'selected' : ''}
               onClick={() => {
                 setMode('register');
@@ -69,7 +88,7 @@ export default function AccountModal({ user, busy, mutate, onClose, onSuccess }:
             </button>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || uploading}
               className={mode === 'login' ? 'selected' : ''}
               onClick={() => {
                 setMode('login');
@@ -100,6 +119,47 @@ export default function AccountModal({ user, busy, mutate, onClose, onSuccess }:
               required
             />
           </label>
+        )}
+        {user && (
+          <>
+            <ImagePicker
+              label="Аватар"
+              value={photos}
+              onChange={setPhotos}
+              onBusy={setUploading}
+              disabled={busy || uploading}
+            />
+            <label>
+              Город
+              <input
+                name="city"
+                defaultValue={user.city}
+                placeholder="Например, Астана"
+                maxLength={80}
+              />
+            </label>
+            <label>
+              О себе
+              <textarea
+                name="bio"
+                defaultValue={user.bio}
+                placeholder="Какие машины любишь? Чем можешь помочь сообществу?"
+                rows={3}
+                maxLength={500}
+              />
+            </label>
+            <p className="form-intro">
+              Имя, аватар, город и описание видны всем. Email остаётся личным.
+            </p>
+            <button
+              type="button"
+              className="text-link"
+              disabled={busy || uploading}
+              onClick={onViewProfile}
+            >
+              Посмотреть мой профиль
+            </button>
+          </>
         )}
         {user ? (
           <div className="account-email">
@@ -151,7 +211,7 @@ export default function AccountModal({ user, busy, mutate, onClose, onSuccess }:
             {error}
           </p>
         )}
-        <button className="primary-button full-width" type="submit" disabled={busy}>
+        <button className="primary-button full-width" type="submit" disabled={busy || uploading}>
           {busy
             ? 'Подожди…'
             : user
@@ -165,7 +225,7 @@ export default function AccountModal({ user, busy, mutate, onClose, onSuccess }:
           <button
             className="secondary-button full-width"
             type="button"
-            disabled={busy}
+            disabled={busy || uploading}
             onClick={logout}
           >
             <LogOut size={16} />

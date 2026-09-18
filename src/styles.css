@@ -2623,3 +2623,310 @@ a {
     scroll-behavior: auto !important;
   }
 }
+
+.avatar,
+.profile-initial {
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.avatar img,
+.profile-initial img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.author-link {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.author-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.photo-picker {
+  border: 1px dashed #c8d6c1;
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+.photo-picker > strong {
+  font-size: 13px;
+}
+.photo-picker > p {
+  color: #62755b;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 7px 0 12px;
+}
+.photo-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+.photo-preview {
+  width: 112px;
+  height: 100px;
+  position: relative;
+}
+.photo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.photo-preview button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: white;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 2px 8px #0003;
+}
+.editor-form .photo-input {
+  position: relative;
+  display: inline-flex;
+  border: 1px solid #c8d6c1;
+  background: #f2f6ee;
+  border-radius: 7px;
+  padding: 10px 14px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.photo-input span {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.editor-form .photo-input input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.photo-input:focus-within {
+  outline: 2px solid #347755;
+  outline-offset: 3px;
+}
+.editor-form .checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+.editor-form .checkbox-label input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  flex: 0 0 18px;
+  accent-color: #347755;
+}
+.post-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 24px 0;
+}
+.post-gallery a {
+  display: block;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #edf1e8;
+}
+.post-gallery img {
+  width: 100%;
+  height: 250px;
+  object-fit: cover;
+  display: block;
+}
+.post-gallery a:only-child {
+  grid-column: 1 / -1;
+}
+.post-gallery a:only-child img {
+  height: auto;
+  max-height: 520px;
+  object-fit: contain;
+}
+.garage-car-art {
+  overflow: hidden;
+  position: relative;
+}
+.garage-car-art .garage-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.garage-car-art .brand-mark {
+  z-index: 1;
+}
+.car-edit-button {
+  margin-top: 18px;
+}
+.member-profile {
+  padding: 28px;
+}
+.member-heading {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+.member-heading > div {
+  min-width: 0;
+}
+.member-heading h1 {
+  margin: 7px 0;
+  font-size: 28px;
+  overflow-wrap: anywhere;
+}
+.member-heading p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+.member-heading small {
+  color: #6d7b66;
+  font-size: 12px;
+}
+.avatar.member-avatar {
+  width: 88px;
+  height: 88px;
+  font-size: 34px;
+  border-radius: 24px;
+}
+.member-bio {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+  font-size: 14px;
+  padding: 20px;
+  background: #f2f6ee;
+  border-radius: 12px;
+  margin: 24px 0;
+}
+.member-profile h2 {
+  font-size: 18px;
+  margin: 28px 0 15px;
+}
+.member-profile h2 span {
+  font-size: 13px;
+  color: #79906d;
+  margin-left: 6px;
+}
+.member-cars {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.member-cars article {
+  border: 1px solid #e1e8dc;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.member-cars article > img {
+  width: 100%;
+  height: 170px;
+  object-fit: cover;
+  display: block;
+}
+.member-cars h3 {
+  margin: 15px 15px 6px;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.member-cars p {
+  margin: 0 15px 16px;
+  font-size: 12px;
+  color: #6d7b66;
+  overflow-wrap: anywhere;
+}
+.member-car-placeholder {
+  height: 170px;
+  display: grid;
+  place-items: center;
+  background: #edf1e8;
+  color: #698458;
+}
+.member-posts {
+  display: grid;
+  gap: 10px;
+}
+.member-posts button {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #e1e8dc;
+  border-radius: 10px;
+  text-align: left;
+}
+.member-posts button:hover {
+  background: #f2f6ee;
+}
+.member-posts img {
+  width: 76px;
+  height: 76px;
+  border-radius: 7px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.member-posts span {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.member-posts strong {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.member-posts small {
+  color: #6d7b66;
+  font-size: 11px;
+}
+@media (max-width: 760px) {
+  .member-profile {
+    padding: 20px 16px;
+  }
+  .member-heading {
+    gap: 12px;
+  }
+  .member-heading h1 {
+    font-size: 22px;
+  }
+  .avatar.member-avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+  }
+  .member-cars {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .post-gallery img {
+    height: 150px;
+  }
+  .photo-preview {
+    width: 90px;
+    height: 85px;
+  }
+  .member-posts button {
+    padding: 12px;
+    gap: 10px;
+  }
+  .member-posts img {
+    width: 60px;
+    height: 60px;
+  }
+}

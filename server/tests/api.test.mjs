@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { openDatabase } from '../db.mjs';
 import { createApp } from '../app.mjs';
+import sharp from 'sharp';
+import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
 
 const origin = 'http://qarhub.test';
 const password = 'QarHub-test-password-2026';
@@ -64,6 +67,213 @@ async function fixture(t, options = {}) {
   }
   return { db, server, base, client, close };
 }
+
+async function photoBytes() {
+  return sharp({ create: { width: 40, height: 30, channels: 3, background: '#258062' } })
+    .jpeg()
+    .withMetadata({ exif: { IFD0: { Artist: 'Private camera owner' } } })
+    .toBuffer();
+}
+async function upload(f, client, bytes, type = 'image/jpeg', extra = {}) {
+  const response = await fetch(f.base + '/api/images', {
+    method: 'POST',
+    body: bytes,
+    headers: {
+      Origin: origin,
+      'X-QarHub-Client': 'web',
+      'Content-Type': type,
+      Cookie: client.cookie,
+      ...extra,
+    },
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+test('photos are decoded, stripped of metadata, attached in order and included in public profiles', async (t) => {
+  const f = await fixture(t);
+  const a = f.client();
+  const b = f.client();
+  const user = (await a.register()).body.state.user;
+  await b.register('b@example.com');
+  const first = await upload(f, a, await photoBytes());
+  const second = await upload(f, a, await photoBytes());
+  assert.equal(first.status, 201);
+  const privatePhoto = await fetch(f.base + first.body.url);
+  assert.equal(privatePhoto.status, 404);
+  const ownPhoto = await fetch(f.base + first.body.url, { headers: { Cookie: a.cookie } });
+  assert.equal(ownPhoto.headers.get('content-type'), 'image/webp');
+  assert.equal(ownPhoto.headers.get('x-content-type-options'), 'nosniff');
+  const metadata = await sharp(Buffer.from(await ownPhoto.arrayBuffer())).metadata();
+  assert.equal(metadata.width, 40);
+  assert.equal(metadata.exif, undefined);
+  const foreign = await b.request('/api/posts', 'POST', { ...postBody, imageIds: [first.body.id] });
+  assert.equal(foreign.status, 400);
+  const attached = await a.request('/api/posts', 'POST', {
+    ...postBody,
+    imageIds: [second.body.id, first.body.id],
+  });
+  assert.equal(attached.status, 201);
+  assert.deepEqual(
+    attached.body.state.posts[0].images.map((p) => p.id),
+    [second.body.id, first.body.id],
+  );
+  assert.equal((await fetch(f.base + first.body.url)).status, 200);
+  await a.request('/api/profile', 'PATCH', {
+    name: 'Водитель',
+    city: 'Астана',
+    bio: 'Люблю японские автомобили.',
+    avatarId: first.body.id,
+  });
+  await a.request(`/api/posts/${attached.body.createdId}/bookmark`, 'PUT', { active: true });
+  const profile = (await b.request(`/api/profiles/${user.id}`)).body.profile;
+  assert.equal(profile.city, 'Астана');
+  assert.equal(profile.avatar, first.body.url);
+  assert.equal(profile.posts.length, 1);
+  assert.equal(profile.posts[0].avatar, first.body.url);
+  assert.equal(profile.email, undefined);
+  assert.equal(profile.saved, undefined);
+  assert.equal(profile.password_hash, undefined);
+  assert.equal(
+    (await b.request('/api/profile', 'PATCH', { name: 'Другой', avatarId: first.body.id })).status,
+    400,
+  );
+  const cleared = await a.request('/api/profile', 'PATCH', {
+    name: 'Водитель',
+    city: '',
+    bio: '',
+    avatarId: null,
+  });
+  assert.equal(cleared.body.state.user.avatar, null);
+  assert.equal(cleared.body.state.user.city, '');
+  assert.equal((await a.request('/api/profiles/missing')).status, 404);
+});
+
+test('car photos stay private until the owner publishes the car and can be replaced or removed', async (t) => {
+  const f = await fixture(t);
+  const a = f.client();
+  const b = f.client();
+  const user = (await a.register()).body.state.user;
+  await b.register('b@example.com');
+  const photo = (await upload(f, a, await photoBytes())).body;
+  const result = await a.request('/api/cars', 'POST', {
+    brand: 'BMW',
+    model: 'E46',
+    year: 2003,
+    imageId: photo.id,
+  });
+  const id = result.body.createdId;
+  assert.equal(result.status, 201);
+  assert.equal(result.body.state.cars[0].isPublic, false);
+  assert.equal((await fetch(f.base + photo.url)).status, 404);
+  assert.equal((await b.request(`/api/profiles/${user.id}`)).body.profile.cars.length, 0);
+  assert.equal((await b.request(`/api/cars/${id}`, 'PATCH', { isPublic: true })).status, 404);
+  await a.request(`/api/cars/${id}`, 'PATCH', { isPublic: true });
+  assert.equal((await fetch(f.base + photo.url)).status, 200);
+  assert.equal((await b.request(`/api/profiles/${user.id}`)).body.profile.cars[0].image, photo.url);
+  await a.request(`/api/cars/${id}`, 'PATCH', { isPublic: false });
+  assert.equal((await fetch(f.base + photo.url)).status, 404);
+  await a.request(`/api/cars/${id}`, 'PATCH', { imageId: null });
+  assert.equal((await a.request('/api/state')).body.state.cars[0].image, null);
+  const another = (await upload(f, a, await photoBytes())).body;
+  await a.request(`/api/cars/${id}`, 'PATCH', { imageId: another.id, isPublic: true });
+  assert.equal((await fetch(f.base + another.url)).status, 200);
+  await a.request(`/api/cars/${id}`, 'DELETE');
+  assert.equal((await fetch(f.base + another.url)).status, 404);
+});
+
+test('uploads reject guests, unsafe formats, corrupt/oversized images and invalid attachment lists', async (t) => {
+  const f = await fixture(t);
+  const a = f.client();
+  const bytes = await photoBytes();
+  assert.equal((await upload(f, a, bytes)).status, 401);
+  await a.register();
+  assert.equal(
+    (await upload(f, a, bytes, 'image/jpeg', { Origin: 'http://evil.example' })).status,
+    403,
+  );
+  assert.equal(
+    (await upload(f, a, Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), 'image/svg+xml'))
+      .status,
+    415,
+  );
+  assert.equal(
+    (
+      await upload(
+        f,
+        a,
+        Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'),
+      )
+    ).status,
+    400,
+  );
+  assert.equal((await upload(f, a, Buffer.from('not an image'))).status, 400);
+  assert.equal((await upload(f, a, Buffer.alloc(5 * 1024 * 1024 + 1))).status, 413);
+  const huge = await sharp({
+    create: { width: 5100, height: 5000, channels: 3, background: 'white' },
+  })
+    .png()
+    .toBuffer();
+  assert.equal((await upload(f, a, huge, 'image/png')).status, 400);
+  const resizedInput = await sharp({
+    create: { width: 2400, height: 1200, channels: 3, background: 'green' },
+  })
+    .png()
+    .toBuffer();
+  const accepted = await upload(f, a, resizedInput, 'image/png');
+  assert.equal(accepted.status, 201);
+  const resized = f.db.prepare('SELECT bytes FROM images WHERE id = ?').get(accepted.body.id);
+  assert.equal((await sharp(Buffer.from(resized.bytes)).metadata()).width, 1920);
+  for (const imageIds of [
+    [null],
+    ['missing'],
+    [accepted.body.id, accepted.body.id],
+    Array(5).fill('x'),
+    'bad',
+  ])
+    assert.equal((await a.request('/api/posts', 'POST', { ...postBody, imageIds })).status, 400);
+  assert.equal(f.db.prepare('SELECT count(*) count FROM posts').get().count, 0);
+  assert.equal(
+    (await a.request('/api/profile', 'PATCH', { name: 'Водитель', bio: 'x'.repeat(501) })).status,
+    400,
+  );
+  f.db.prepare('UPDATE images SET created_at = 0').run();
+  await upload(f, a, bytes);
+  assert.equal(f.db.prepare('SELECT id FROM images WHERE id = ?').get(accepted.body.id), undefined);
+});
+
+test('day-two database migrates without losing accounts, posts or private cars', async (t) => {
+  const folder = mkdtempSync(join(tmpdir(), 'qarhub-migration-'));
+  const file = join(folder, 'old.sqlite');
+  t.after(() => {
+    const resolved = resolve(folder);
+    if (resolved.startsWith(resolve(tmpdir()) + '\\'))
+      rmSync(resolved, { recursive: true, force: true });
+  });
+  const old = new DatabaseSync(file);
+  old.exec(readFileSync(new URL('../schema.sql', import.meta.url), 'utf8'));
+  old.prepare('INSERT INTO schema_migrations VALUES (2, ?)').run(new Date().toISOString());
+  old
+    .prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?)')
+    .run('old', 'old@example.com', 'Старый участник', 'existing-hash', '2026-09-11');
+  old
+    .prepare('INSERT INTO cars VALUES (?, ?, ?, ?, ?, ?)')
+    .run('car', 'old', 'BMW', 'E46', 2003, '2.5');
+  old.close();
+  const f = await fixture(t, { file });
+  assert.equal(
+    f.db.prepare('SELECT password_hash FROM users WHERE id = ?').get('old').password_hash,
+    'existing-hash',
+  );
+  assert.equal(f.db.prepare('SELECT is_public FROM cars').get().is_public, 0);
+  assert.equal((await f.client().request('/api/profiles/old')).body.profile.cars.length, 0);
+  await f.close();
+  const reopened = openDatabase(file);
+  assert.equal(
+    reopened.prepare('SELECT count(*) count FROM schema_migrations WHERE version = 3').get().count,
+    1,
+  );
+  reopened.close();
+});
 
 test('registration creates durable account, salted password hash and hashed session token', async (t) => {
   const f = await fixture(t);
@@ -253,7 +463,14 @@ test('accounts, sessions and posts survive database and server restart', async (
   const first = await fixture(t, { file });
   const a = first.client();
   await a.register();
-  const id = (await a.request('/api/posts', 'POST', postBody)).body.createdId;
+  const photo = (await upload(first, a, await photoBytes())).body;
+  const id = (await a.request('/api/posts', 'POST', { ...postBody, imageIds: [photo.id] })).body
+    .createdId;
+  await a.request('/api/profile', 'PATCH', {
+    name: 'Водитель',
+    city: 'Астана',
+    avatarId: photo.id,
+  });
   const cookie = a.cookie;
   await first.close();
   const second = await fixture(t, { file });
@@ -262,5 +479,8 @@ test('accounts, sessions and posts survive database and server restart', async (
   const state = (await b.request('/api/state')).body.state;
   assert.equal(state.posts[0].id, id);
   assert.equal(state.user.email, 'driver@example.com');
+  assert.equal(state.user.city, 'Астана');
+  assert.equal(state.posts[0].images[0].id, photo.id);
+  assert.equal((await fetch(second.base + photo.url)).status, 200);
   await second.close();
 });

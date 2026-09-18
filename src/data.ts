@@ -8,12 +8,16 @@ export type Category =
 export interface Reply {
   id: string;
   author: string;
+  authorId?: string | null;
+  avatar?: string | null;
   text: string;
   createdAt: string;
 }
 export interface Post {
   id: string;
   author: string;
+  authorId?: string | null;
+  avatar?: string | null;
   initials: string;
   color: string;
   car: string;
@@ -27,6 +31,7 @@ export interface Post {
   replies: Reply[];
   acceptedReply?: string;
   image?: string;
+  images?: { id: string; url: string }[];
   own?: boolean;
   demo?: boolean;
 }
@@ -36,6 +41,9 @@ export interface Car {
   model: string;
   year: string;
   engine: string;
+  imageId?: string | null;
+  image?: string | null;
+  isPublic?: boolean;
 }
 export const brands = [
   'Toyota',

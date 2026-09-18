@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { imageUrl } from './images.mjs';
 import { initialPosts } from '../src/data.ts';
 
 export function openDatabase(file, { seed = true } = {}) {
@@ -50,6 +51,29 @@ export function openDatabase(file, { seed = true } = {}) {
         new Date().toISOString(),
       );
     }
+    if (!db.prepare('SELECT version FROM schema_migrations WHERE version = 3').get()) {
+      db.exec(`
+        CREATE TABLE images (
+          id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          bytes BLOB NOT NULL, created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE INDEX images_user ON images(user_id);
+        ALTER TABLE users ADD COLUMN city TEXT NOT NULL DEFAULT '';
+        ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT '';
+        ALTER TABLE users ADD COLUMN avatar_id TEXT REFERENCES images(id) ON DELETE SET NULL;
+        ALTER TABLE cars ADD COLUMN image_id TEXT REFERENCES images(id) ON DELETE SET NULL;
+        ALTER TABLE cars ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0 CHECK(is_public IN (0, 1));
+        CREATE TABLE post_images (
+          post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+          image_id TEXT NOT NULL REFERENCES images(id), position INTEGER NOT NULL,
+          PRIMARY KEY(post_id, image_id), UNIQUE(post_id, position)
+        ) STRICT;
+        CREATE INDEX post_images_image ON post_images(image_id);
+      `);
+      db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (3, ?)').run(
+        new Date().toISOString(),
+      );
+    }
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -62,7 +86,7 @@ export function openDatabase(file, { seed = true } = {}) {
 export function getState(db, user = null) {
   const allReplies = db
     .prepare(
-      `SELECT r.*, u.name FROM replies r LEFT JOIN users u ON u.id = r.user_id ORDER BY r.created_at, r.rowid`,
+      `SELECT r.*, u.name, u.avatar_id FROM replies r LEFT JOIN users u ON u.id = r.user_id ORDER BY r.created_at, r.rowid`,
     )
     .all();
   const replies = new Map();
@@ -70,6 +94,8 @@ export function getState(db, user = null) {
     const list = replies.get(r.post_id) || [];
     list.push({
       id: r.id,
+      authorId: r.user_id,
+      avatar: imageUrl(r.avatar_id),
       author: r.name || r.demo_author || 'Удалённый участник',
       text: r.body,
       createdAt: r.created_at,
@@ -78,16 +104,27 @@ export function getState(db, user = null) {
   }
   const rows = db
     .prepare(
-      `SELECT p.*, u.name,
+      `SELECT p.*, u.name, u.avatar_id,
     (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS actual_likes
     FROM posts p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC, p.rowid DESC`,
     )
     .all();
+  const attachments = new Map();
+  for (const item of db
+    .prepare('SELECT post_id, image_id FROM post_images ORDER BY position')
+    .all()) {
+    const list = attachments.get(item.post_id) || [];
+    list.push({ id: item.image_id, url: imageUrl(item.image_id) });
+    attachments.set(item.post_id, list);
+  }
   const posts = rows.map((p) => {
     const author = p.name || p.demo_author || 'Удалённый участник';
     return {
       id: p.id,
       author,
+      authorId: p.user_id,
+      avatar: imageUrl(p.avatar_id),
+      images: attachments.get(p.id) || [],
       initials: author[0].toUpperCase(),
       color: p.color,
       brand: p.brand,
@@ -98,7 +135,7 @@ export function getState(db, user = null) {
       kind: p.kind,
       createdAt: p.created_at,
       likes: p.demo_likes + p.actual_likes,
-      image: p.image || undefined,
+      image: attachments.get(p.id)?.[0]?.url || p.image || undefined,
       demo: !!p.is_demo,
       own: !!user && p.user_id === user.id,
       replies: replies.get(p.id) || [],
@@ -108,13 +145,18 @@ export function getState(db, user = null) {
   if (!user) return { posts, user: null, name: '', cars: [], liked: [], saved: [], joined: [] };
   const cars = db
     .prepare(
-      'SELECT id, brand, model, year, engine FROM cars WHERE user_id = ? ORDER BY rowid DESC',
+      'SELECT id, brand, model, year, engine, image_id, is_public FROM cars WHERE user_id = ? ORDER BY rowid DESC',
     )
     .all(user.id)
-    .map((c) => ({ ...c, year: String(c.year) }));
+    .map(carView);
   return {
     posts,
-    user,
+    user: {
+      ...user,
+      ...profileFields(
+        db.prepare('SELECT city, bio, avatar_id FROM users WHERE id = ?').get(user.id),
+      ),
+    },
     name: user.name,
     cars,
     liked: db
@@ -129,5 +171,38 @@ export function getState(db, user = null) {
       .prepare('SELECT brand FROM memberships WHERE user_id = ?')
       .all(user.id)
       .map((r) => r.brand),
+  };
+}
+
+function profileFields(row) {
+  return { city: row.city, bio: row.bio, avatarId: row.avatar_id, avatar: imageUrl(row.avatar_id) };
+}
+function carView(c) {
+  return {
+    id: c.id,
+    brand: c.brand,
+    model: c.model,
+    year: String(c.year),
+    engine: c.engine,
+    imageId: c.image_id,
+    image: imageUrl(c.image_id),
+    isPublic: !!c.is_public,
+  };
+}
+export function getProfile(db, id) {
+  const user = db
+    .prepare('SELECT id, name, city, bio, avatar_id, created_at FROM users WHERE id = ?')
+    .get(id);
+  if (!user) return null;
+  return {
+    id: user.id,
+    name: user.name,
+    ...profileFields(user),
+    joinedAt: user.created_at,
+    cars: db
+      .prepare('SELECT * FROM cars WHERE user_id = ? AND is_public = 1 ORDER BY rowid DESC')
+      .all(id)
+      .map(carView),
+    posts: getState(db).posts.filter((p) => p.authorId === id),
   };
 }
